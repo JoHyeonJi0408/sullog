@@ -245,3 +245,30 @@ input, textarea, select { font: inherit; color: inherit; }
 .card h3 { margin: 0 0 6px; font-size: 16px; }
 .card p { margin: 6px 0; }
 .card.warn { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+
+/* ---- auto-fill ---- */
+.head-actions { display: flex; gap: 2px; }
+.spinner {
+  display: inline-block; width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.ai-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  margin-top: -6px; padding: 8px 12px; border-radius: 12px; font-size: 13px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+.ai-bar.idle { justify-content: center; }
+.ai-bar.error { background: color-mix(in srgb, var(--danger) 8%, var(--surface)); border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); }
+.ai-bar .text-btn { padding: 4px 2px; font-size: 14px; }
+.ai-reading { display: inline-flex; align-items: center; gap: 8px; padding: 4px 0; font-weight: 600; }
+.field input.ai-filled { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+div.ai-filled .chip.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent); }
+.hint-line { margin: -6px 0 0; font-size: 13px; color: var(--muted); }
+.hint-line a, .card a { color: var(--accent); }
+.key-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.key-input { flex: 1; min-width: 0; border: 1px solid var(--border); background: var(--bg); border-radius: 10px; padding: 9px 10px; font-size: 16px; outline: none; }
+.key-input:focus { border-color: var(--accent); }
+.key-mask { flex: 1; font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }

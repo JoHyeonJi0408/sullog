@@ -9,6 +9,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      workbox: { globPatterns: ['**/*.{js,css,html,wasm,png,svg}'], maximumFileSizeToCacheInBytes: 3 * 1024 * 1024 },
       includeAssets: ['apple-touch-icon.png', 'favicon.svg'],
       manifest: {
         name: '술로그',

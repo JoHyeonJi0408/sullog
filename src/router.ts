@@ -2,15 +2,16 @@ import { useEffect, useState } from 'react';
 
 export type Route =
   | { name: 'list' }
-  | { name: 'new' }
+  | { name: 'new'; barcode?: string }
   | { name: 'detail'; id: string }
   | { name: 'editDrink'; id: string }
   | { name: 'tasting'; drinkId: string; tastingId?: string }
   | { name: 'settings' };
 
 function parse(hash: string): Route {
-  const p = hash.replace(/^#\/?/, '').split('/').filter(Boolean);
-  if (p[0] === 'new') return { name: 'new' };
+  const [path, query = ''] = hash.replace(/^#\/?/, '').split('?');
+  const p = path.split('/').filter(Boolean);
+  if (p[0] === 'new') return { name: 'new', barcode: new URLSearchParams(query).get('barcode') ?? undefined };
   if (p[0] === 'settings') return { name: 'settings' };
   if (p[0] === 'd' && p[1]) {
     if (p[2] === 'edit') return { name: 'editDrink', id: p[1] };

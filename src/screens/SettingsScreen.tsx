@@ -4,6 +4,7 @@ import { db } from '../db';
 import { exportBackup, importBackup } from '../repo';
 import { TopBar } from '../components/ui';
 import { today } from '../util';
+import { getApiKey, setApiKey } from '../lib/settings';
 
 export function SettingsScreen() {
   const counts = useLiveQuery(async () => ({ drinks: await db.drinks.count(), tastings: await db.tastings.count() }), []);
@@ -11,6 +12,8 @@ export function SettingsScreen() {
   const [usage, setUsage] = useState<string>();
   const [msg, setMsg] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const [savedKey, setSavedKey] = useState(getApiKey());
+  const [keyInput, setKeyInput] = useState('');
   const standalone =
     window.matchMedia('(display-mode: standalone)').matches || (navigator as unknown as { standalone?: boolean }).standalone === true;
 
@@ -68,6 +71,44 @@ export function SettingsScreen() {
             {usage && <span className="muted"> · {usage}</span>}
           </p>
           <p className="muted small">기록은 이 기기의 브라우저 안에만 저장돼요. 서버로 전송되지 않아요.</p>
+        </section>
+
+        <section className="card">
+          <h3>AI 자동 입력</h3>
+          <p className="small">
+            라벨 사진을 찍으면 Claude가 이름, 종류, 도수, 생산자 등을 채워줘요. 본인의 Claude API 키가 필요하고, 사진 한 장에
+            약 20~40원 정도 들어요. 키는 이 기기에만 저장돼요.
+          </p>
+          {savedKey ? (
+            <div className="key-row">
+              <span className="key-mask">{savedKey.slice(0, 10)}••••{savedKey.slice(-4)}</span>
+              <button className="btn small danger" onClick={() => { setApiKey(undefined); setSavedKey(undefined); }}>지우기</button>
+            </div>
+          ) : (
+            <>
+              <div className="key-row">
+                <input
+                  className="key-input"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="sk-ant-…"
+                  value={keyInput}
+                  onChange={(e) => setKeyInput(e.target.value)}
+                />
+                <button
+                  className="btn small primary"
+                  disabled={!keyInput.trim()}
+                  onClick={() => { setApiKey(keyInput.trim()); setSavedKey(keyInput.trim()); setKeyInput(''); }}
+                >
+                  저장
+                </button>
+              </div>
+              <p className="muted small">
+                <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">Claude Console</a>에서
+                키를 만들 수 있어요. 크레딧 충전이 필요해요.
+              </p>
+            </>
+          )}
         </section>
 
         {!standalone && (

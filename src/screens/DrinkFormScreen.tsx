@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { categoryOf, type CategoryId } from '../types';
-import { addPhoto, deleteDrink, saveDrink, saveTasting } from '../repo';
+import { addPhoto, deleteDrink, findByBarcode, saveDrink, saveTasting } from '../repo';
+import type { Drink } from '../types';
+import { extractFromLabel, AiError, type LabelGuess } from '../lib/ai';
+import { readBarcode } from '../lib/barcode';
+import { getApiKey } from '../lib/settings';
+import { processPhoto } from '../photo';
 import { back, go } from '../router';
 import { CategoryPicker, Field, TopBar, useBlobUrl, usePhotoUrl } from '../components/ui';
 import { TastingFields, isTastingEmpty, type TastingDraft } from '../components/TastingFields';
@@ -28,16 +33,20 @@ const emptyTasting = (): TastingDraft => ({ date: today(), nose: '', palate: '',
 
 const s = (v: unknown) => (v == null ? '' : String(v));
 
-export function DrinkFormScreen({ id }: { id?: string }) {
+export function DrinkFormScreen({ id, initialBarcode }: { id?: string; initialBarcode?: string }) {
   const editing = !!id;
   const existing = useLiveQuery(() => (id ? db.drinks.get(id) : undefined), [id]);
-  const [draft, setDraft] = useState<Draft>(emptyDraft);
+  const [draft, setDraft] = useState<Draft>(() => ({ ...emptyDraft, barcode: initialBarcode ?? '' }));
   const [loaded, setLoaded] = useState(!editing);
   const [photoId, setPhotoId] = useState<string>();
   const [newPhoto, setNewPhoto] = useState<File>();
   const [withTasting, setWithTasting] = useState(true);
   const [tasting, setTasting] = useState<TastingDraft>(emptyTasting);
-  const [more, setMore] = useState(false);
+  const [more, setMore] = useState(!!initialBarcode);
+  const [ai, setAi] = useState<{ state: 'idle' | 'reading' | 'done' | 'error'; msg?: string }>({ state: 'idle' });
+  const [aiFilled, setAiFilled] = useState<Set<keyof Draft>>(new Set());
+  const [barcodeMatch, setBarcodeMatch] = useState<Drink>();
+  const hasKey = !!getApiKey();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
@@ -75,7 +84,66 @@ export function DrinkFormScreen({ id }: { id?: string }) {
     return allDrinks.filter((d) => d.name.toLowerCase().includes(n)).slice(0, 3);
   }, [draft.name, allDrinks, editing]);
 
-  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => {
+    setDraft((d) => ({ ...d, [k]: v }));
+    if (aiFilled.has(k)) setAiFilled((s) => new Set([...s].filter((x) => x !== k)));
+  };
+
+  async function onPhotoPicked(f: File) {
+    setNewPhoto(f);
+    // 1) 바코드: 이 기기에서 바로 읽음 (인터넷 불필요)
+    readBarcode(f)
+      .then(async (code) => {
+        if (!code) return;
+        setDraft((d) => (d.barcode ? d : { ...d, barcode: code }));
+        setMore(true);
+        if (!editing) setBarcodeMatch(await findByBarcode(code));
+      })
+      .catch(() => {});
+    // 2) 라벨: 새 기록이고 API 키가 있으면 자동으로 AI가 읽음
+    if (!editing && hasKey) runAi(f);
+  }
+
+  async function runAi(src?: Blob) {
+    const photo = src ?? newPhoto ?? (photoId ? (await db.photos.get(photoId))?.blob : undefined);
+    if (!photo) return;
+    setAi({ state: 'reading' });
+    try {
+      const { blob } = await processPhoto(photo);
+      const g = await extractFromLabel(blob);
+      if (!g.isDrink) return setAi({ state: 'error', msg: '사진에서 술을 찾지 못했어요' });
+      const n = applyGuess(g);
+      setAi({ state: 'done', msg: n > 0 ? `AI가 ${n}개 칸을 채웠어요. 맞는지 확인해주세요` : '새로 채울 칸이 없었어요' });
+    } catch (e) {
+      setAi({ state: 'error', msg: e instanceof AiError ? e.message : '자동 입력에 실패했어요' });
+    }
+  }
+
+  /** 비어 있는 칸만 채운다 (직접 쓴 내용은 건드리지 않음) */
+  function applyGuess(g: LabelGuess): number {
+    const vals: Partial<Draft> = {
+      name: g.name ?? '',
+      category: (g.category ?? '') as Draft['category'],
+      subtype: g.subtype ?? '',
+      producer: g.producer ?? '',
+      origin: g.origin ?? '',
+      abv: g.abv != null ? String(g.abv) : '',
+      vintage: g.vintage ?? '',
+      volumeMl: g.volumeMl != null ? String(Math.round(g.volumeMl)) : '',
+    };
+    const keys = (Object.keys(vals) as (keyof Draft)[]).filter((k) => vals[k] && !String(draft[k]).trim());
+    if (keys.length === 0) return 0;
+    setDraft((d) => {
+      const next = { ...d };
+      for (const k of keys) if (!String(d[k]).trim()) (next[k] as string) = vals[k] as string;
+      return next;
+    });
+    setAiFilled(new Set(keys));
+    if (keys.some((k) => k === 'vintage' || k === 'volumeMl')) setMore(true);
+    return keys.length;
+  }
+
+  const filledCls = (k: keyof Draft) => (aiFilled.has(k) ? 'ai-filled' : undefined);
 
   async function onSave() {
     setError('');
@@ -159,6 +227,33 @@ export function DrinkFormScreen({ id }: { id?: string }) {
             <button type="button" className="text-btn danger" onClick={() => { setNewPhoto(undefined); setPhotoId(undefined); }}>사진 빼기</button>
           </div>
         )}
+        {photoUrl && hasKey && (
+          <div className={'ai-bar ' + ai.state}>
+            {ai.state === 'reading' ? (
+              <span className="ai-reading"><i className="spinner" />AI가 라벨을 읽는 중…</span>
+            ) : (
+              <>
+                {ai.msg && <span>{ai.msg}</span>}
+                <button type="button" className="text-btn strong" onClick={() => runAi()}>
+                  {ai.state === 'idle' ? '✦ AI로 정보 채우기' : '다시 읽기'}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {!hasKey && !editing && (
+          <p className="hint-line">
+            설정에서 Claude API 키를 넣으면 라벨 사진만 찍어도 정보가 자동으로 채워져요. <a href="#/settings">설정으로</a>
+          </p>
+        )}
+        {barcodeMatch && (
+          <div className="similar">
+            <span>이 바코드로 이미 기록한 술이 있어요:</span>
+            <button type="button" onClick={() => go(`/d/${barcodeMatch.id}/t/new`, true)}>
+              {barcodeMatch.name} <em>노트만 추가하기</em> →
+            </button>
+          </div>
+        )}
         <input
           ref={fileRef}
           type="file"
@@ -166,13 +261,13 @@ export function DrinkFormScreen({ id }: { id?: string }) {
           hidden
           onChange={(e) => {
             const f = e.target.files?.[0];
-            if (f) setNewPhoto(f);
+            if (f) onPhotoPicked(f);
             e.target.value = '';
           }}
         />
 
         <Field label="이름 *">
-          <input placeholder="예) 글렌피딕 12년" value={draft.name} onChange={(e) => set('name', e.target.value)} />
+          <input placeholder="예) 글렌피딕 12년" className={filledCls('name')} value={draft.name} onChange={(e) => set('name', e.target.value)} />
         </Field>
         {similar.length > 0 && (
           <div className="similar">
@@ -187,23 +282,23 @@ export function DrinkFormScreen({ id }: { id?: string }) {
 
         <div className="field">
           <span className="field-label">종류 *</span>
-          <CategoryPicker value={draft.category} onChange={(v) => set('category', v)} />
+          <div className={filledCls('category')}><CategoryPicker value={draft.category} onChange={(v) => set('category', v)} /></div>
         </div>
 
         <div className="row2">
           <Field label="세부 종류">
-            <input placeholder="버번, 준마이, IPA…" value={draft.subtype} onChange={(e) => set('subtype', e.target.value)} />
+            <input placeholder="버번, 준마이, IPA…" className={filledCls('subtype')} value={draft.subtype} onChange={(e) => set('subtype', e.target.value)} />
           </Field>
           <Field label="도수 (%)">
-            <input inputMode="decimal" placeholder="40" value={draft.abv} onChange={(e) => set('abv', e.target.value)} />
+            <input inputMode="decimal" placeholder="40" className={filledCls('abv')} value={draft.abv} onChange={(e) => set('abv', e.target.value)} />
           </Field>
         </div>
         <div className="row2">
           <Field label="생산자">
-            <input placeholder="양조장, 증류소, 와이너리" value={draft.producer} onChange={(e) => set('producer', e.target.value)} />
+            <input placeholder="양조장, 증류소, 와이너리" className={filledCls('producer')} value={draft.producer} onChange={(e) => set('producer', e.target.value)} />
           </Field>
           <Field label="생산지">
-            <input placeholder="스코틀랜드, 전남 해남" value={draft.origin} onChange={(e) => set('origin', e.target.value)} />
+            <input placeholder="스코틀랜드, 전남 해남" className={filledCls('origin')} value={draft.origin} onChange={(e) => set('origin', e.target.value)} />
           </Field>
         </div>
 
@@ -215,10 +310,10 @@ export function DrinkFormScreen({ id }: { id?: string }) {
           <>
             <div className="row2">
               <Field label="빈티지 / 숙성">
-                <input placeholder="2019, 12년" value={draft.vintage} onChange={(e) => set('vintage', e.target.value)} />
+                <input placeholder="2019, 12년" className={filledCls('vintage')} value={draft.vintage} onChange={(e) => set('vintage', e.target.value)} />
               </Field>
               <Field label="용량 (ml)">
-                <input inputMode="numeric" placeholder="700" value={draft.volumeMl} onChange={(e) => set('volumeMl', e.target.value)} />
+                <input inputMode="numeric" placeholder="700" className={filledCls('volumeMl')} value={draft.volumeMl} onChange={(e) => set('volumeMl', e.target.value)} />
               </Field>
             </div>
             <div className="row2">

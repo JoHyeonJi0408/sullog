@@ -9,7 +9,7 @@ export function App() {
   const r = useRoute();
   switch (r.name) {
     case 'new':
-      return <DrinkFormScreen key="new" />;
+      return <DrinkFormScreen key={"new" + (r.barcode ?? "")} initialBarcode={r.barcode} />;
     case 'editDrink':
       return <DrinkFormScreen key={'e' + r.id} id={r.id} />;
     case 'detail':

@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { readBarcode } from '../lib/barcode';
+import { findByBarcode } from '../repo';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { CATEGORIES, categoryOf, type CategoryId } from '../types';
@@ -14,6 +16,23 @@ export function ListScreen() {
   const [q, setQ] = useState('');
   const [cat, setCat] = useState<CategoryId | 'all'>('all');
   const [sort, setSort] = useState<Sort>('recent');
+  const [scanning, setScanning] = useState(false);
+  const scanRef = useRef<HTMLInputElement>(null);
+
+  async function onScan(f: File) {
+    setScanning(true);
+    try {
+      const code = await readBarcode(f);
+      if (!code) return alert('바코드를 찾지 못했어요. 바코드가 화면 가운데에 크게 나오게 다시 찍어보세요.');
+      const hit = await findByBarcode(code);
+      if (hit) go(`/d/${hit.id}/t/new`);
+      else go(`/new?barcode=${encodeURIComponent(code)}`);
+    } catch {
+      alert('바코드를 읽지 못했어요.');
+    } finally {
+      setScanning(false);
+    }
+  }
 
   const rows = useMemo(() => {
     if (!drinks || !tastings) return undefined;
@@ -52,9 +71,17 @@ export function ListScreen() {
     <div className="screen">
       <header className="home-head">
         <h1>술로그</h1>
+        <div className="head-actions">
+        <button className="icon-btn" aria-label="바코드로 찾기" disabled={scanning} onClick={() => scanRef.current?.click()}>
+          {scanning ? <i className="spinner" /> : (
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M10 8v8M13 8v8M17 8v8" /></svg>
+          )}
+        </button>
+        <input ref={scanRef} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onScan(f); e.target.value = ''; }} />
         <button className="icon-btn" aria-label="설정" onClick={() => go('/settings')}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
         </button>
+        </div>
       </header>
 
       <div className="search">
