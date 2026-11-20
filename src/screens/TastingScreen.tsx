@@ -1,57 +1,28 @@
-import { useEffect, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
-import { deleteTasting, saveTasting } from '../repo';
+import { useState } from 'react';
+import { deleteTasting, saveTasting, useStore, writeErrorMessage } from '../repo';
 import { back } from '../router';
-import { TopBar } from '../components/ui';
-import { TastingFields, isTastingEmpty, type TastingDraft } from '../components/TastingFields';
-import { optStr, today } from '../util';
+import { ConfirmButton, TopBar } from '../components/ui';
+import { TastingFields, draftFromTasting, emptyTasting, isTastingEmpty, tastingInput, type TastingDraft } from '../components/TastingFields';
 
 export function TastingScreen({ drinkId, tastingId }: { drinkId: string; tastingId?: string }) {
-  const drink = useLiveQuery(() => db.drinks.get(drinkId), [drinkId]);
-  const existing = useLiveQuery(() => (tastingId ? db.tastings.get(tastingId) : undefined), [tastingId]);
-  const [t, setT] = useState<TastingDraft>({ date: today(), nose: '', palate: '', finish: '', pairing: '', memo: '' });
-  const [loaded, setLoaded] = useState(!tastingId);
+  const { drinks, tastings } = useStore();
+  const drink = drinks.find((d) => d.id === drinkId);
+  const existing = tastingId ? tastings.find((t) => t.id === tastingId) : undefined;
+  const [t, setT] = useState<TastingDraft>(() => (existing ? draftFromTasting(existing) : emptyTasting()));
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (!existing || loaded) return;
-    setT({
-      date: existing.date,
-      rating: existing.rating,
-      nose: existing.nose ?? '',
-      palate: existing.palate ?? '',
-      finish: existing.finish ?? '',
-      pairing: existing.pairing ?? '',
-      memo: existing.memo ?? '',
-    });
-    setLoaded(true);
-  }, [existing, loaded]);
-
   async function onSave() {
-    if (isTastingEmpty(t)) return setError('별점이나 노트를 하나 이상 적어주세요');
+    if (isTastingEmpty(t)) return setError('별점이나 선택지를 하나 이상 골라주세요');
     setSaving(true);
-    await saveTasting(
-      drinkId,
-      {
-        date: t.date || today(),
-        rating: t.rating,
-        nose: optStr(t.nose),
-        palate: optStr(t.palate),
-        finish: optStr(t.finish),
-        pairing: optStr(t.pairing),
-        memo: optStr(t.memo),
-      },
-      tastingId,
-    );
-    back('/d/' + drinkId);
-  }
-
-  async function onDelete() {
-    if (!tastingId || !confirm('이 테이스팅 노트를 삭제할까요?')) return;
-    await deleteTasting(tastingId);
-    back('/d/' + drinkId);
+    setError('');
+    try {
+      await saveTasting(drinkId, tastingInput(t), tastingId);
+      back('/d/' + drinkId);
+    } catch (e) {
+      setError(writeErrorMessage(e));
+      setSaving(false);
+    }
   }
 
   return (
@@ -60,26 +31,30 @@ export function TastingScreen({ drinkId, tastingId }: { drinkId: string; tasting
         onBack
         title={tastingId ? '노트 편집' : '테이스팅 노트'}
         right={
-          <button className="text-btn strong" onClick={onSave} disabled={saving || !loaded}>
+          <button className="text-btn strong" onClick={onSave} disabled={saving}>
             저장
           </button>
         }
       />
       {drink && <p className="form-context">{drink.name}</p>}
-      {loaded && (
-        <div className="form">
-          <TastingFields value={t} onChange={setT} />
-          {error && <p className="error">{error}</p>}
-          <button className="btn primary block" onClick={onSave} disabled={saving}>
-            {saving ? '저장 중…' : '저장'}
-          </button>
-          {tastingId && (
-            <button className="btn danger block" onClick={onDelete}>
-              이 노트 삭제
-            </button>
-          )}
-        </div>
-      )}
+      <div className="form">
+        <TastingFields value={t} onChange={setT} category={drink?.category ?? ''} />
+        {error && <p className="error">{error}</p>}
+        <button className="btn primary block" onClick={onSave} disabled={saving}>
+          {saving ? '저장 중…' : '저장'}
+        </button>
+        {tastingId && (
+          <ConfirmButton
+            label="이 노트 삭제"
+            question="이 테이스팅 노트를 삭제할까요? 되돌릴 수 없어요."
+            confirmLabel="삭제"
+            onConfirm={async () => {
+              await deleteTasting(tastingId);
+              back('/d/' + drinkId);
+            }}
+          />
+        )}
+      </div>
     </div>
   );
 }

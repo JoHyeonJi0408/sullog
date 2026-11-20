@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+/** 앱 안에서만 쓰는 화면 이동 (아티팩트 주소창에는 경로를 남기지 않는다) */
+import { useSyncExternalStore } from 'react';
 
 export type Route =
   | { name: 'list' }
@@ -8,8 +9,8 @@ export type Route =
   | { name: 'tasting'; drinkId: string; tastingId?: string }
   | { name: 'settings' };
 
-function parse(hash: string): Route {
-  const [path, query = ''] = hash.replace(/^#\/?/, '').split('?');
+function parse(full: string): Route {
+  const [path, query = ''] = full.split('?');
   const p = path.split('/').filter(Boolean);
   if (p[0] === 'new') return { name: 'new', barcode: new URLSearchParams(query).get('barcode') ?? undefined };
   if (p[0] === 'settings') return { name: 'settings' };
@@ -21,35 +22,33 @@ function parse(hash: string): Route {
   return { name: 'list' };
 }
 
-export function useRoute(): Route {
-  const [route, setRoute] = useState(() => parse(location.hash));
-  useEffect(() => {
-    const on = () => {
-      setRoute(parse(location.hash));
-      window.scrollTo(0, 0);
-    };
-    window.addEventListener('hashchange', on);
-    return () => window.removeEventListener('hashchange', on);
-  }, []);
-  return route;
+let stack: string[] = ['/'];
+let current = parse('/');
+const listeners = new Set<() => void>();
+function emit() {
+  current = parse(stack[stack.length - 1]);
+  listeners.forEach((l) => l());
+  window.scrollTo(0, 0);
 }
 
-let depth = 0; // 앱 안에서 이동한 횟수 — 0이면 뒤로가기 대신 fallback으로
+export function useRoute(): Route {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => current,
+  );
+}
 
 export function go(path: string, replace = false) {
-  const url = '#' + path;
-  if (!replace) depth++;
-  if (replace) {
-    history.replaceState(null, '', url);
-    window.dispatchEvent(new HashChangeEvent('hashchange'));
-  } else {
-    location.hash = path;
-  }
+  if (replace) stack = [...stack.slice(0, -1), path];
+  else stack = [...stack, path];
+  emit();
 }
 
 export function back(fallback = '/') {
-  if (depth > 0) {
-    depth--;
-    history.back();
-  } else go(fallback, true);
+  if (stack.length > 1) stack = stack.slice(0, -1);
+  else stack = [fallback];
+  emit();
 }

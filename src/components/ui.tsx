@@ -1,8 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
-import { CATEGORIES, categoryOf, type CategoryId } from '../types';
+import { CATEGORIES, blobUrl, categoryOf, type CategoryId } from '../types';
 import { back } from '../router';
+import { CategoryIcon } from './icons';
 
 export function TopBar({ title, onBack, right }: { title?: string; onBack?: (() => void) | true; right?: ReactNode }) {
   return (
@@ -20,19 +19,6 @@ export function TopBar({ title, onBack, right }: { title?: string; onBack?: (() 
   );
 }
 
-export function usePhotoUrl(photoId: string | undefined, kind: 'blob' | 'thumb' = 'thumb') {
-  const photo = useLiveQuery(() => (photoId ? db.photos.get(photoId) : undefined), [photoId]);
-  const blob = photo?.[kind];
-  const [url, setUrl] = useState<string>();
-  useEffect(() => {
-    if (!blob) return setUrl(undefined);
-    const u = URL.createObjectURL(blob);
-    setUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [blob]);
-  return url;
-}
-
 export function useBlobUrl(blob: Blob | undefined) {
   const [url, setUrl] = useState<string>();
   useEffect(() => {
@@ -44,12 +30,20 @@ export function useBlobUrl(blob: Blob | undefined) {
   return url;
 }
 
-export function Thumb({ photoId, category, size = 56 }: { photoId?: string; category: string; size?: number }) {
-  const url = usePhotoUrl(photoId);
+/** 저장된 사진. 불러오지 못하면 대체 표시 */
+export function StoredImg({ id, alt = '', className }: { id?: string; alt?: string; className?: string }) {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => setBroken(false), [id]);
+  if (!id || broken) return null;
+  return <img className={className} src={blobUrl(id)} alt={alt} onError={() => setBroken(true)} />;
+}
+
+export function Thumb({ thumbId, category, size = 56 }: { thumbId?: string; category: string; size?: number }) {
   const c = categoryOf(category);
+  const [broken, setBroken] = useState(false);
   return (
     <div className="thumb" style={{ width: size, height: size, ['--cat' as string]: c.color }}>
-      {url ? <img src={url} alt="" /> : <span>{c.label.slice(0, 1)}</span>}
+      {thumbId && !broken ? <img src={blobUrl(thumbId)} alt="" onError={() => setBroken(true)} /> : <CategoryIcon id={c.id} size={Math.round(size * 0.5)} />}
     </div>
   );
 }
@@ -58,7 +52,7 @@ export function CategoryPill({ category }: { category: string }) {
   const c = categoryOf(category);
   return (
     <span className="pill" style={{ ['--cat' as string]: c.color }}>
-      <i />
+      <CategoryIcon id={c.id} size={15} strokeWidth={2} />
       {c.label}
     </span>
   );
@@ -75,6 +69,7 @@ export function CategoryPicker({ value, onChange }: { value: CategoryId | ''; on
           style={{ ['--cat' as string]: c.color }}
           onClick={() => onChange(c.id)}
         >
+          <CategoryIcon id={c.id} size={16} strokeWidth={2} />
           {c.label}
         </button>
       ))}
@@ -86,11 +81,9 @@ const STAR = 'M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6L2.5
 
 function StarIcon({ fill, size }: { fill: 0 | 0.5 | 1; size: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" className="star">
+    <svg width={size} height={size} viewBox="0 0 24 24" className="star" aria-hidden="true">
       <path d={STAR} className="star-bg" />
-      {fill > 0 && (
-        <path d={STAR} className="star-fg" style={fill === 0.5 ? { clipPath: 'inset(0 50% 0 0)' } : undefined} />
-      )}
+      {fill > 0 && <path d={STAR} className="star-fg" style={fill === 0.5 ? { clipPath: 'inset(0 50% 0 0)' } : undefined} />}
     </svg>
   );
 }
@@ -138,5 +131,56 @@ export function Field({ label, children, hint }: { label: string; children: Reac
       {children}
       {hint && <span className="field-hint">{hint}</span>}
     </label>
+  );
+}
+
+/** 삭제처럼 되돌릴 수 없는 동작: 한 번 더 확인하는 버튼 (브라우저 confirm 창 대신) */
+export function ConfirmButton({ label, question, confirmLabel, onConfirm }: { label: string; question: string; confirmLabel: string; onConfirm: () => Promise<void> | void }) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (!asking)
+    return (
+      <button className="btn danger block" onClick={() => setAsking(true)}>
+        {label}
+      </button>
+    );
+  return (
+    <div className="confirm-box" role="alertdialog" aria-label={question}>
+      <p>{question}</p>
+      <div className="btn-row">
+        <button className="btn" onClick={() => setAsking(false)} disabled={busy}>
+          취소
+        </button>
+        <button
+          className="btn solid-danger"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await onConfirm();
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? '삭제 중…' : confirmLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 화면 아래에 잠깐 뜨는 안내 */
+export function Toast({ msg, onDone }: { msg?: string; onDone: () => void }) {
+  useEffect(() => {
+    if (!msg) return;
+    const t = setTimeout(onDone, 3500);
+    return () => clearTimeout(t);
+  }, [msg, onDone]);
+  if (!msg) return null;
+  return (
+    <div className="toast" role="status">
+      {msg}
+    </div>
   );
 }
